@@ -17,6 +17,10 @@
 /** Required Host service: the browser HTTP carrier this plugin registers on. */
 export const inject = ['webServer']
 
+import { readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 /** Exact path of the notification drain route. */
 export const ROUTE_PATH = '/dsh-session-notify/notifications'
 
@@ -25,6 +29,17 @@ const MAX_QUEUE = 200
 
 /** Polling interval (ms) for checking session events. */
 const POLL_INTERVAL_MS = 3000
+
+/** Title cache lifetime (ms) — titles change slowly, events do not. */
+const TITLE_TTL_MS = 60_000
+
+/** Where the harness keeps per-session projections (they hold the title). */
+const PROJECTION_DIR = join(
+  process.env.DSH_HOME || join(homedir(), '.dsh'),
+  'storages',
+  'session_projcache',
+  'sessions',
+)
 
 /**
  * A pending notification awaiting delivery to the browser half.
@@ -62,6 +77,8 @@ export function apply(ctx, _config = {}) {
   let titleById = new Map()
   /** When the title map was last refreshed. */
   let titleRefreshedAt = 0
+  /** sessionId -> { title, at } resolved from the projection cache. */
+  const titleCache = new Map()
 
   /**
    * Log through the host logger when it exists.
@@ -72,6 +89,50 @@ export function apply(ctx, _config = {}) {
     if (typeof write !== 'function') return
     if (detail === undefined) write(message)
     else write(message, detail)
+  }
+
+  /**
+   * Read one session's display title from the harness projection cache.
+   *
+   * The projection JSON keeps the sidebar's rendered title at
+   * `record.rows.title.val` — the only place a human-readable name exists;
+   * the session event log and the persistence registry carry no title.
+   *
+   * @param sessionId - session id.
+   * @returns the title, or undefined when the projection has none.
+   */
+  async function titleFromProjection(sessionId) {
+    try {
+      const raw = await readFile(join(PROJECTION_DIR, `${sessionId}.json`), 'utf8')
+      const title = JSON.parse(raw)?.record?.rows?.title?.val
+      if (typeof title === 'string' && title.trim() !== '') return title.trim()
+    } catch {
+      // missing/unreadable projection: fall through to the caches
+    }
+    return undefined
+  }
+
+  /**
+   * Resolve a session's display name, cached for a minute.
+   * @param sessionId - session id.
+   * @returns the best available name (title, else the id).
+   */
+  async function resolveTitle(sessionId) {
+    const cached = titleCache.get(sessionId)
+    if (cached && Date.now() - cached.at < TITLE_TTL_MS) return cached.title
+    let title = await titleFromProjection(sessionId)
+    if (!title) title = titleById.get(sessionId)
+    // Never surface a raw session id to the user; an unnamed session gets a
+    // neutral placeholder instead (the id stays available for navigation).
+    if (!title) title = '未命名会话'
+    titleCache.set(sessionId, { title, at: Date.now() })
+    if (titleCache.size > 500) {
+      for (const key of titleCache.keys()) {
+        titleCache.delete(key)
+        if (titleCache.size <= 500) break
+      }
+    }
+    return title
   }
 
   /**
@@ -107,15 +168,10 @@ export function apply(ctx, _config = {}) {
    * @param {object} session - session handle from the harness session service.
    * @param {object|string} [snapshot] - persistence row, for a better title.
    */
-  function checkSession(session, snapshot) {
+  async function checkSession(session, snapshot) {
     if (!session || typeof session !== 'object') return
     const sessionId = session.id || session.sessionId || (typeof snapshot === 'string' ? snapshot : snapshot?.id || snapshot?.sessionId)
     if (!sessionId) return
-
-    const snapTitle = snapshot && typeof snapshot === 'object'
-      ? snapshot.title || snapshot.name
-      : undefined
-    const sessionTitle = snapTitle || titleById.get(sessionId) || getSessionTitle(session)
 
     // Get the current sequence number
     const seq = Number(session.seq)
@@ -130,6 +186,13 @@ export function apply(ctx, _config = {}) {
 
     const prevSeq = lastSeq.get(sessionId)
     if (prevSeq >= seq) return
+
+    // Resolve the human-readable name from the projection cache (the only
+    // place a session title exists), never settling for the raw id first.
+    const snapTitle = snapshot && typeof snapshot === 'object'
+      ? snapshot.title || snapshot.name
+      : undefined
+    const sessionTitle = snapTitle || await resolveTitle(sessionId)
 
     // Check new events from prevSeq to seq-1
     for (let i = prevSeq; i < seq; i++) {
@@ -231,7 +294,9 @@ export function apply(ctx, _config = {}) {
         scanStats.liveSessions = arr.length
         scanStats.lastError = undefined
         await refreshTitles()
-        for (const session of arr) checkSession(session)
+        for (const session of arr) {
+          await checkSession(session)
+        }
         return
       }
 
@@ -260,7 +325,7 @@ export function apply(ctx, _config = {}) {
         }
         if (!session) continue // released by the host; nothing to scan
         liveChecked += 1
-        checkSession(session, snapshot)
+        await checkSession(session, snapshot)
       }
       scanStats.pollMode = 'persistence+get'
       scanStats.lastScanAt = Date.now()
@@ -317,7 +382,7 @@ export function apply(ctx, _config = {}) {
       ctx.webServer.register({
         kind: 'exact',
         path: '/dsh-session-notify/test',
-        handler: (request, response) => {
+        handler: async (request, response) => {
           const url = request.url || ''
           const params = new URL(url, 'http://x').searchParams
           const kindParam = params.get('kind') === 'interaction' ? 'interaction' : 'turn-end'
@@ -333,12 +398,13 @@ export function apply(ctx, _config = {}) {
               const live = sessions && typeof sessions.list === 'function' ? sessions.list() : []
               const target = Array.isArray(live) && live.length > 0 ? live[live.length - 1] : undefined
               sessionId = target && target.id ? target.id : 'test-session'
-              sessionTitle = sessionTitle || (sessionId !== 'test-session' ? titleById.get(sessionId) || sessionId : '测试会话')
             } catch {
               sessionId = 'test-session'
             }
           }
-          if (sessionId === 'test-session' && sessionTitle === '') sessionTitle = '测试会话'
+          // Always prefer the real display name; never show the raw id in a title.
+          if (sessionId !== 'test-session') sessionTitle = sessionTitle || await resolveTitle(sessionId)
+          if (sessionTitle === '') sessionTitle = '测试会话'
 
           const fire = () =>
             enqueue({
@@ -409,16 +475,16 @@ export function apply(ctx, _config = {}) {
       ctx.webServer.register({
         kind: 'exact',
         path: '/dsh-session-notify/sessions',
-        handler: (request, response) => {
+        handler: async (request, response) => {
           let rows = []
           try {
             const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined
             const live = sessions && typeof sessions.list === 'function' ? sessions.list() : []
-            rows = (Array.isArray(live) ? live : []).map((s) => ({
+            rows = await Promise.all((Array.isArray(live) ? live : []).map(async (s) => ({
               id: s.id,
-              title: titleById.get(s.id) || s.id,
+              title: await resolveTitle(s.id),
               seq: s.seq,
-            }))
+            })))
           } catch {
             // leave rows empty
           }
