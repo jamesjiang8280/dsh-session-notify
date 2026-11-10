@@ -126,11 +126,17 @@ window.__ModuleLoader__.load({
   min-height: 64px;
   max-width: 100%;
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.34s ease;
 }
 .dsn-toast:hover {
   transform: translateX(0) scale(1.02);
   box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4);
+}
+/* Auto-dismiss: a slow fade + slight slide after 20s without interaction. */
+.dsn-toast.exiting {
+  opacity: 0;
+  transform: translateX(48px) scale(0.98);
+  pointer-events: none;
 }
 .dsn-toast.kind-turn-end {
   border-left: 4px solid #34c759;
@@ -178,12 +184,6 @@ window.__ModuleLoader__.load({
 .dsn-dismiss:active { background: rgba(255, 255, 255, 0.28); }
 @keyframes dsnSlideIn {
   to { transform: translateX(0); opacity: 1; }
-}
-.dsn-toast.exiting {
-  animation: dsnSlideOut 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-@keyframes dsnSlideOut {
-  to { transform: translateX(120%); opacity: 0; }
 }
 @media (prefers-color-scheme: light) {
   .dsn-toast { background: rgba(245, 245, 247, 0.94); color: #1c1c1e; }
@@ -237,13 +237,53 @@ window.__ModuleLoader__.load({
       return false
     }
 
+    /** Idle time before a toast fades out on its own (ms). */
+    const AUTO_DISMISS_MS = 20000
+    /** Duration of the fade-out, kept in sync with the CSS transition (ms). */
+    const FADE_MS = 340
+
     /**
      * One toast item.
+     *
+     * Fades away on its own after 20s without interaction; hovering pauses the
+     * countdown, leaving resumes it, an explicit dismiss wins immediately.
      */
     function ToastItem({ notification, onDismiss, t, ctxRef }) {
       const kind = notification.kind === 'interaction' ? 'interaction' : 'turn-end'
       const title = kind === 'interaction' ? t('interaction') : t('turn-end')
-      
+      const [exiting, setExiting] = useState(false)
+      const timerRef = useRef(null)
+
+      /** (Re)start the idle countdown that ends in a fade-out. */
+      const armTimer = useCallback(() => {
+        if (timerRef.current !== null) clearTimeout(timerRef.current)
+        timerRef.current = setTimeout(() => {
+          setExiting(true)
+          // Remove after the CSS fade finishes (keep the same slot for the id).
+          timerRef.current = setTimeout(() => onDismiss(notification.id), FADE_MS)
+        }, AUTO_DISMISS_MS)
+      }, [notification.id, onDismiss])
+
+      useEffect(() => {
+        armTimer()
+        return () => {
+          if (timerRef.current !== null) clearTimeout(timerRef.current)
+        }
+      }, [armTimer])
+
+      /** Hover pauses the countdown. */
+      const pauseTimer = useCallback(() => {
+        if (timerRef.current !== null) {
+          clearTimeout(timerRef.current)
+          timerRef.current = null
+        }
+      }, [])
+
+      /** Leaving the toast restarts a full idle window. */
+      const resumeTimer = useCallback(() => {
+        if (!exiting) armTimer()
+      }, [exiting, armTimer])
+
       /**
        * Handle toast click: navigate to the session in the current tab.
        */
@@ -254,11 +294,13 @@ window.__ModuleLoader__.load({
       }
 
       return h('div', {
-        className: `dsn-toast kind-${kind}`,
+        className: `dsn-toast kind-${kind}${exiting ? ' exiting' : ''}`,
         role: 'alert',
         'aria-label': `${title}. ${notification.message}`,
-        onClick: handleToastClick,
-        style: { cursor: 'pointer' },
+        onClick: exiting ? undefined : handleToastClick,
+        onMouseEnter: pauseTimer,
+        onMouseLeave: resumeTimer,
+        style: { cursor: exiting ? 'default' : 'pointer' },
       },
         h('div', { className: `dsn-icon kind-${kind}`, 'aria-hidden': 'true' },
           kind === 'interaction' ? '!' : '✓'

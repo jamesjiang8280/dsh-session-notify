@@ -14,6 +14,7 @@ Session notifier for DeepSeek Harness — macOS-style toasts at the top-right of
 | 需要交互 | `interaction` / `ask-user` / `session/held` | 🟠 橙色边框「会话需要交互」 |
 
 - 多条通知在右上方垂直堆叠（最多保留最近 50 条），可逐条关闭；
+- **20 秒无操作自动渐隐消失**：悬停暂停计时、移开重新计时，点击/关闭立即处理；
 - 通知文案带**会话标题**（从持久化快照缓存，30 秒刷新）；
 - **点击通知在当前标签页内切换会话**（调用框架 `uiWorkspace.openSession()`，与点击侧边栏会话行一致，无刷新、无新标签页）；
 - 悬停有 2% 放大 + 阴影加深的可点击提示；
