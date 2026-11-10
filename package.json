@@ -1,0 +1,61 @@
+{
+  "name": "dsh-session-notify",
+  "version": "0.1.0",
+  "description": "会话完成/交互提醒：在 DSH 窗格右上方弹出类 macOS 通知提示框，提示该进程的消息。Session completion/interaction notifier — macOS-style toast notifications at the top-right of the DSH pane.",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check client.js"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "session",
+    "notify",
+    "notification",
+    "toast",
+    "macos",
+    "plugin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jamesjiang8280/dsh-session-notify.git"
+  },
+  "homepage": "https://github.com/jamesjiang8280/dsh-session-notify#readme",
+  "bugs": {
+    "url": "https://github.com/jamesjiang8280/dsh-session-notify/issues"
+  },
+  "author": "jamesjiang8280"
+}
