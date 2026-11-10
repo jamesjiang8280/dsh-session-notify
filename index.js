@@ -58,8 +58,14 @@ const PROJECTION_DIR = join(
  * @param ctx - host composition context.
  * @returns undefined; mounted effects are owned by `ctx.effect`.
  */
-export function apply(ctx, _config = {}) {
-  /** FIFO queue of pending notifications. */
+export function apply(ctx, config = {}) {
+  /**
+   * Only notify for sessions the user can actually see and open. Subagent
+   * sessions (`header.origin === "subagent"`, or a delegation depth > 0) are
+   * agent-internal delegations with no sidebar entry, so a toast pointing at
+   * one is a dead end. `config.includeSubagents: true` opts back in.
+   */
+  const includeSubagents = config?.includeSubagents === true  /** FIFO queue of pending notifications. */
   const queue = []
   /** Set of recently delivered ids to suppress duplicate toasts. */
   const delivered = new Set()
@@ -161,6 +167,24 @@ export function apply(ctx, _config = {}) {
   function getSessionTitle(session) {
     if (!session || typeof session !== 'object') return 'unknown'
     return session.title || session.name || session.id || 'unknown'
+  }
+
+  /**
+   * Whether a live session is an agent-internal delegation rather than a
+   * user-visible top-level session (no sidebar row, no way to open it).
+   * @param session - live harness session.
+   * @returns true for subagent sessions.
+   */
+  function isSubagentSession(session) {
+    try {
+      const header = session && session.header
+      if (!header || typeof header !== 'object') return false
+      if (header.origin === 'subagent') return true
+      const depth = Number(header.delegationDepth)
+      return Number.isFinite(depth) && depth > 0
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -295,6 +319,7 @@ export function apply(ctx, _config = {}) {
         scanStats.lastError = undefined
         await refreshTitles()
         for (const session of arr) {
+          if (!includeSubagents && isSubagentSession(session)) continue
           await checkSession(session)
         }
         return
@@ -324,6 +349,7 @@ export function apply(ctx, _config = {}) {
           continue
         }
         if (!session) continue // released by the host; nothing to scan
+        if (!includeSubagents && isSubagentSession(session)) continue
         liveChecked += 1
         await checkSession(session, snapshot)
       }
@@ -396,7 +422,8 @@ export function apply(ctx, _config = {}) {
             try {
               const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined
               const live = sessions && typeof sessions.list === 'function' ? sessions.list() : []
-              const target = Array.isArray(live) && live.length > 0 ? live[live.length - 1] : undefined
+              const visible = (Array.isArray(live) ? live : []).filter((s) => includeSubagents || !isSubagentSession(s))
+              const target = visible.length > 0 ? visible[visible.length - 1] : undefined
               sessionId = target && target.id ? target.id : 'test-session'
             } catch {
               sessionId = 'test-session'
@@ -480,7 +507,8 @@ export function apply(ctx, _config = {}) {
           try {
             const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : undefined
             const live = sessions && typeof sessions.list === 'function' ? sessions.list() : []
-            rows = await Promise.all((Array.isArray(live) ? live : []).map(async (s) => ({
+            const visible = (Array.isArray(live) ? live : []).filter((s) => includeSubagents || !isSubagentSession(s))
+            rows = await Promise.all(visible.map(async (s) => ({
               id: s.id,
               title: await resolveTitle(s.id),
               seq: s.seq,
