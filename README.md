@@ -19,6 +19,7 @@ Session notifier for DeepSeek Harness — macOS-style toasts at the top-right of
 - **点击通知在当前标签页内切换会话**（调用框架 `uiWorkspace.openSession()`，与点击侧边栏会话行一致，无刷新、无新标签页）；
 - 悬停有 2% 放大 + 阴影加深的可点击提示；
 - 中英文案跟随浏览器语言；
+- **默认只通知你能在侧边栏看到的顶层会话**：AI 内部派生的子会话（`header.origin = "subagent"` / `delegationDepth > 0`）没有入口可点，默认跳过；需要时可用配置 `includeSubagents: true` 打开；
 - 纯 JS，无构建步骤，Host 半 + 浏览器半。
 
 ## 安装 / Installation
