@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
   id: 'dsh-session-notify',
   factory: (require) => {
     /** Loaded-bundle marker, readable from the console to verify the build. */
-    const CLIENT_VERSION = '2026-11-13.1'
+    const CLIENT_VERSION = '2026-11-13.2'
     try {
       if (typeof window !== 'undefined') window.__DSH_SESSION_NOTIFY_VERSION__ = CLIENT_VERSION
     } catch {
@@ -57,6 +57,7 @@ window.__ModuleLoader__.load({
       'approval': '等待审批',
       'dismiss': '关闭',
       'title': '会话提醒',
+      'open-session': '点击跳转到该会话',
     }
     const en = {
       'turn-end': 'Turn completed',
@@ -64,6 +65,7 @@ window.__ModuleLoader__.load({
       'approval': 'Approval required',
       'dismiss': 'Dismiss',
       'title': 'Session notification',
+      'open-session': 'Click to open this session',
     }
 
     /** Stylesheet id. */
@@ -135,6 +137,10 @@ window.__ModuleLoader__.load({
   transform: translateX(0) scale(1.02);
   box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4);
 }
+.dsn-toast:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 2px;
+}
 /* Auto-dismiss: a slow fade + slight slide after 20s without interaction. */
 .dsn-toast.exiting {
   opacity: 0;
@@ -148,7 +154,7 @@ window.__ModuleLoader__.load({
   border-left: 4px solid #ff9500;
 }
 .dsn-toast.kind-approval {
-  border-left: 4px solid #ff3b30;
+  border-left: 4px solid #ff6a00;
 }
 .dsn-icon {
   flex-shrink: 0;
@@ -160,7 +166,7 @@ window.__ModuleLoader__.load({
 }
 .dsn-icon.kind-turn-end { background: rgba(52, 199, 89, 0.18); color: #34c759; }
 .dsn-icon.kind-interaction { background: rgba(255, 149, 0, 0.18); color: #ff9500; }
-.dsn-icon.kind-approval { background: rgba(255, 59, 48, 0.18); color: #ff3b30; }
+.dsn-icon.kind-approval { background: rgba(255, 106, 0, 0.18); color: #ff6a00; }
 .dsn-body { flex: 1; min-width: 0; }
 .dsn-title {
   font-weight: 600;
@@ -294,19 +300,28 @@ window.__ModuleLoader__.load({
       }, [exiting, armTimer])
 
       /**
-       * Handle toast click: navigate to the session in the current tab.
+       * Activate the toast: switch to the session in the current tab — the
+       * same call the sidebar makes and the same path every kind uses, so the
+       * approval toast navigates exactly like the green completion toast.
        */
-      const handleToastClick = () => {
-        if (notification.sessionId) {
-          navigateToSession(ctxRef, notification.sessionId)
-        }
+      const activate = () => {
+        if (exiting) return
+        if (notification.sessionId) navigateToSession(ctxRef, notification.sessionId)
       }
 
       return h('div', {
         className: `dsn-toast kind-${kind}${exiting ? ' exiting' : ''}`,
         role: 'alert',
+        tabIndex: exiting ? -1 : 0,
+        title: notification.sessionId ? t('open-session') : undefined,
         'aria-label': `${title}. ${notification.message}`,
-        onClick: exiting ? undefined : handleToastClick,
+        onClick: activate,
+        onKeyDown: (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            activate()
+          }
+        },
         onMouseEnter: pauseTimer,
         onMouseLeave: resumeTimer,
         style: { cursor: exiting ? 'default' : 'pointer' },
