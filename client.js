@@ -5,7 +5,8 @@
  * window pane. Notifications are raised when:
  *
  *  - a session's turn completes (`turn/end`);
- *  - a session needs user interaction (ask-user / tool approval).
+ *  - a tool call is waiting for approval (`approval/asked`, the "等待审批" card);
+ *  - a session needs user interaction (ask-user question / tool approval).
  *
  * The component polls the host's notification drain endpoint and projects each
  * pending notification into a `shell.overlay` slot rendered at the top-right
@@ -19,7 +20,7 @@ window.__ModuleLoader__.load({
   id: 'dsh-session-notify',
   factory: (require) => {
     /** Loaded-bundle marker, readable from the console to verify the build. */
-    const CLIENT_VERSION = '2026-11-10.3'
+    const CLIENT_VERSION = '2026-11-13.1'
     try {
       if (typeof window !== 'undefined') window.__DSH_SESSION_NOTIFY_VERSION__ = CLIENT_VERSION
     } catch {
@@ -53,12 +54,14 @@ window.__ModuleLoader__.load({
     const zh = {
       'turn-end': '会话回合已完成',
       'interaction': '会话需要交互',
+      'approval': '等待审批',
       'dismiss': '关闭',
       'title': '会话提醒',
     }
     const en = {
       'turn-end': 'Turn completed',
       'interaction': 'Interaction required',
+      'approval': 'Approval required',
       'dismiss': 'Dismiss',
       'title': 'Session notification',
     }
@@ -144,6 +147,9 @@ window.__ModuleLoader__.load({
 .dsn-toast.kind-interaction {
   border-left: 4px solid #ff9500;
 }
+.dsn-toast.kind-approval {
+  border-left: 4px solid #ff3b30;
+}
 .dsn-icon {
   flex-shrink: 0;
   width: 20px;
@@ -154,6 +160,7 @@ window.__ModuleLoader__.load({
 }
 .dsn-icon.kind-turn-end { background: rgba(52, 199, 89, 0.18); color: #34c759; }
 .dsn-icon.kind-interaction { background: rgba(255, 149, 0, 0.18); color: #ff9500; }
+.dsn-icon.kind-approval { background: rgba(255, 59, 48, 0.18); color: #ff3b30; }
 .dsn-body { flex: 1; min-width: 0; }
 .dsn-title {
   font-weight: 600;
@@ -249,8 +256,10 @@ window.__ModuleLoader__.load({
      * countdown, leaving resumes it, an explicit dismiss wins immediately.
      */
     function ToastItem({ notification, onDismiss, t, ctxRef }) {
-      const kind = notification.kind === 'interaction' ? 'interaction' : 'turn-end'
-      const title = kind === 'interaction' ? t('interaction') : t('turn-end')
+      const kind = notification.kind === 'interaction' || notification.kind === 'approval'
+        ? notification.kind
+        : 'turn-end'
+      const title = kind === 'approval' ? t('approval') : kind === 'interaction' ? t('interaction') : t('turn-end')
       const [exiting, setExiting] = useState(false)
       const timerRef = useRef(null)
 
@@ -303,7 +312,7 @@ window.__ModuleLoader__.load({
         style: { cursor: exiting ? 'default' : 'pointer' },
       },
         h('div', { className: `dsn-icon kind-${kind}`, 'aria-hidden': 'true' },
-          kind === 'interaction' ? '!' : '✓'
+          kind === 'turn-end' ? '✓' : '!'
         ),
         h('div', { className: 'dsn-body' },
           h('p', { className: 'dsn-title' }, title),

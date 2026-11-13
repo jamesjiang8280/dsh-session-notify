@@ -8,8 +8,12 @@
  * Two event kinds trigger a macOS-style toast:
  *
  *  - `turn/end` — a session's turn finished (the agent completed its work).
- *  - `session/held` — the session is waiting for user interaction (askUser /
- *    tool approval), i.e. it needs the user's attention.
+ *  - `approval/asked` — a tool call is waiting for the user to allow or reject
+ *    it (the "等待审批" card), and `ask_user_question` tool calls — the session
+ *    is waiting for user interaction.
+ *
+ * Legacy interaction event names (`interaction` / `ask-user` / `session/held`)
+ * remain supported for older harnesses.
  *
  * @module dsh-session-notify/host
  */
@@ -47,7 +51,7 @@ const PROJECTION_DIR = join(
  * @property {string} id - unique notification id
  * @property {string} sessionId - the DSH session id
  * @property {string} sessionTitle - human-readable session title
- * @property {string} kind - 'turn-end' | 'interaction'
+ * @property {string} kind - 'turn-end' | 'interaction' | 'approval'
  * @property {string} message - user-facing message
  * @property {number} timestamp - epoch ms when the notification was raised
  */
@@ -241,6 +245,36 @@ export function apply(ctx, config = {}) {
           message: message || `会话「${sessionTitle}」的回合已完成`,
           timestamp: Date.now(),
         })
+      } else if (eventType === 'approval/asked') {
+        // A tool is waiting for the user to allow or reject it. The event data
+        // carries the tool name and an optional asker-supplied reason, which is
+        // exactly what the approval card in the UI shows.
+        const data = event.data && typeof event.data === 'object' ? event.data : {}
+        const toolName = typeof data.toolName === 'string' && data.toolName !== '' ? data.toolName : '工具'
+        const rawReason = typeof data.reason === 'string' ? data.reason.trim() : ''
+        const reason = rawReason.length > 80 ? `${rawReason.slice(0, 80)}…` : rawReason
+        enqueue({
+          id: `approval:${sessionId}:${String(data.id ?? i)}`,
+          sessionId,
+          sessionTitle,
+          kind: 'approval',
+          message: `会话「${sessionTitle}」等待审批：${toolName}${reason === '' ? '' : `（${reason}）`}`,
+          timestamp: Date.now(),
+        })
+      } else if (eventType === 'tool/call') {
+        // `ask_user_question` blocks the turn until the user answers, so it is
+        // an interaction the user must see even though no dedicated event exists.
+        const data = event.data && typeof event.data === 'object' ? event.data : {}
+        if (data.name === 'ask_user_question') {
+          enqueue({
+            id: `ask-user:${sessionId}:${String(data.callId ?? i)}`,
+            sessionId,
+            sessionTitle,
+            kind: 'interaction',
+            message: `会话「${sessionTitle}」需要您回答一个问题`,
+            timestamp: Date.now(),
+          })
+        }
       } else if (eventType === 'interaction' || eventType === 'ask-user' || eventType === 'session/held') {
         enqueue({
           id: `interaction:${sessionId}:${i}`,
@@ -400,6 +434,7 @@ export function apply(ctx, config = {}) {
   // Expose a test endpoint to trigger a test notification.
   //   /dsh-session-notify/test?kind=turn-end
   //   /dsh-session-notify/test?kind=interaction
+  //   /dsh-session-notify/test?kind=approval
   //   /dsh-session-notify/test?sessionId=<live session id>&title=<label>
   //   /dsh-session-notify/test?repeat=30   (re-enqueue every 2s for 30s)
   let repeatTimer = null
@@ -411,7 +446,8 @@ export function apply(ctx, config = {}) {
         handler: async (request, response) => {
           const url = request.url || ''
           const params = new URL(url, 'http://x').searchParams
-          const kindParam = params.get('kind') === 'interaction' ? 'interaction' : 'turn-end'
+          const requestedKind = params.get('kind')
+          const kindParam = requestedKind === 'interaction' || requestedKind === 'approval' ? requestedKind : 'turn-end'
           const repeatSeconds = Math.min(Math.max(Number(params.get('repeat')) || 0, 0), 60)
 
           // Default to the most recently active live session so a click can be
@@ -441,7 +477,9 @@ export function apply(ctx, config = {}) {
               kind: kindParam,
               message: kindParam === 'turn-end'
                 ? '这是一条测试通知：会话回合已完成'
-                : '这是一条测试通知：会话需要与您交互',
+                : kindParam === 'approval'
+                  ? `这是一条测试通知：会话「${sessionTitle || sessionId}」等待审批：bash`
+                  : '这是一条测试通知：会话需要与您交互',
               timestamp: Date.now(),
             })
 

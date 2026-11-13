@@ -11,7 +11,8 @@ Session notifier for DeepSeek Harness — macOS-style toasts at the top-right of
 | 事件 | 触发条件 | 通知样式 |
 |------|----------|----------|
 | 会话完成 | 会话事件流出现 `turn/end` | 🟢 绿色边框「会话回合已完成」 |
-| 需要交互 | `interaction` / `ask-user` / `session/held` | 🟠 橙色边框「会话需要交互」 |
+| 等待审批 | 会话事件流出现 `approval/asked`（工具调用等你点「允许一次/拒绝」） | 🔴 红色边框「等待审批」，文案带工具名与原因 |
+| 需要交互 | `tool/call` 中出现 `ask_user_question`，或旧事件 `interaction` / `ask-user` / `session/held` | 🟠 橙色边框「会话需要交互」 |
 
 - 多条通知在右上方垂直堆叠（最多保留最近 50 条），可逐条关闭；
 - **20 秒无操作自动渐隐消失**：悬停暂停计时、移开重新计时，点击/关闭立即处理；
@@ -45,7 +46,7 @@ dsh plugin --profile web add link:/path/to/dsh-session-notify
 ## 工作原理 / How it works
 
 ```
-会话事件 (turn/end | interaction)
+会话事件 (turn/end | approval/asked | tool/call ask_user_question)
         │  写入会话事件日志
         ▼
 Host 半 (index.js)  每 3 秒轮询 sessions.list()
@@ -66,6 +67,7 @@ Client 半 (client.js)  注册进 shell.overlay → 右上角 toast
 |------|------|
 | `GET /dsh-session-notify/test?kind=turn-end` | 触发一条绿色测试通知（绑定最新 live 会话） |
 | `GET /dsh-session-notify/test?kind=interaction` | 触发一条橙色测试通知 |
+| `GET /dsh-session-notify/test?kind=approval` | 触发一条红色「等待审批」测试通知 |
 | `GET /dsh-session-notify/test?sessionId=xxx&title=yyy` | 指定会话/标题 |
 | `GET /dsh-session-notify/test?repeat=30` | 每 2 秒重复触发，持续 30 秒（最多 60） |
 | `GET /dsh-session-notify/debug` | 队列、投递数、轮询模式、live 会话数、浏览器端自检状态 |
@@ -88,7 +90,7 @@ dsh-session-notify/
 ## 已知限制 / Limitations
 
 - 只能看到**宿主仍持有（live）**的会话；已被释放的历史会话不会再触发通知。
-- 交互类通知依赖事件名 `interaction` / `ask-user` / `session/held`；若你的版本使用其他事件名，改 `index.js` 中的匹配列表即可。
+- 交互类通知依赖事件名 `approval/asked`（审批）、`tool/call` 中的 `ask_user_question`（提问）以及旧事件名 `interaction` / `ask-user` / `session/held`；若你的版本使用其他事件名，改 `index.js` 中的匹配列表即可。
 - 通知点击依赖 `uiWorkspace` 服务（DSH 客户端内置）；若某版本服务名不同，可在 `client.js` 的 `navigateToSession` 候选列表里补充。
 
 ## 许可 / License

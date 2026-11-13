@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-notify",
-  "version": "0.1.0",
-  "description": "会话完成/交互提醒：在 DSH 窗格右上方弹出类 macOS 通知提示框，提示该进程的消息。Session completion/interaction notifier — macOS-style toast notifications at the top-right of the DSH pane.",
+  "version": "0.1.1",
+  "description": "会话完成/审批/交互提醒：在 DSH 窗格右上方弹出类 macOS 通知提示框，提示该进程的消息。Session completion/approval/interaction notifier — macOS-style toast notifications at the top-right of the DSH pane.",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
