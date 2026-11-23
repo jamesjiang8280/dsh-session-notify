@@ -254,12 +254,18 @@ window.__ModuleLoader__.load({
     const AUTO_DISMISS_MS = 20000
     /** Duration of the fade-out, kept in sync with the CSS transition (ms). */
     const FADE_MS = 340
+    /**
+     * After a click opens its session, the toast retires itself: wait this long
+     * (leaving room for the fade inside a 3s budget), then fade out.
+     */
+    const CLICK_RETIRE_MS = 2600
 
     /**
      * One toast item.
      *
      * Fades away on its own after 20s without interaction; hovering pauses the
-     * countdown, leaving resumes it, an explicit dismiss wins immediately.
+     * countdown, leaving resumes it, an explicit dismiss wins immediately, and
+     * a click navigates to the session then retires the toast within ~3s.
      */
     function ToastItem({ notification, onDismiss, t, ctxRef }) {
       const kind = notification.kind === 'interaction' || notification.kind === 'approval'
@@ -267,17 +273,31 @@ window.__ModuleLoader__.load({
         : 'turn-end'
       const title = kind === 'approval' ? t('approval') : kind === 'interaction' ? t('interaction') : t('turn-end')
       const [exiting, setExiting] = useState(false)
+      /** Set on the first activation, so a toast navigates and retires once. */
+      const activatedRef = useRef(false)
+      const retiringRef = useRef(false)
       const timerRef = useRef(null)
+
+      /** Start the fade-out, then remove the toast once the transition ends. */
+      const beginExit = useCallback(() => {
+        if (retiringRef.current) return
+        retiringRef.current = true
+        if (timerRef.current !== null) {
+          clearTimeout(timerRef.current)
+          timerRef.current = null
+        }
+        setExiting(true)
+        timerRef.current = setTimeout(() => onDismiss(notification.id), FADE_MS)
+      }, [notification.id, onDismiss])
 
       /** (Re)start the idle countdown that ends in a fade-out. */
       const armTimer = useCallback(() => {
+        // Once activated, the click-retire timer owns the lifecycle: mouse
+        // leave must not re-arm the 20s idle countdown.
+        if (retiringRef.current || activatedRef.current) return
         if (timerRef.current !== null) clearTimeout(timerRef.current)
-        timerRef.current = setTimeout(() => {
-          setExiting(true)
-          // Remove after the CSS fade finishes (keep the same slot for the id).
-          timerRef.current = setTimeout(() => onDismiss(notification.id), FADE_MS)
-        }, AUTO_DISMISS_MS)
-      }, [notification.id, onDismiss])
+        timerRef.current = setTimeout(beginExit, AUTO_DISMISS_MS)
+      }, [beginExit])
 
       useEffect(() => {
         armTimer()
@@ -288,6 +308,7 @@ window.__ModuleLoader__.load({
 
       /** Hover pauses the countdown. */
       const pauseTimer = useCallback(() => {
+        if (retiringRef.current || activatedRef.current) return
         if (timerRef.current !== null) {
           clearTimeout(timerRef.current)
           timerRef.current = null
@@ -303,10 +324,17 @@ window.__ModuleLoader__.load({
        * Activate the toast: switch to the session in the current tab — the
        * same call the sidebar makes and the same path every kind uses, so the
        * approval toast navigates exactly like the green completion toast.
+       * The click also schedules the toast's retirement within ~3 seconds.
        */
       const activate = () => {
-        if (exiting) return
+        if (exiting || activatedRef.current) return
+        activatedRef.current = true
         if (notification.sessionId) navigateToSession(ctxRef, notification.sessionId)
+        if (timerRef.current !== null) {
+          clearTimeout(timerRef.current)
+          timerRef.current = null
+        }
+        timerRef.current = setTimeout(beginExit, CLICK_RETIRE_MS)
       }
 
       return h('div', {
